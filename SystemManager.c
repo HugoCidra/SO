@@ -205,7 +205,7 @@ void *AlertsWatcher(){
 void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 	workers->active = 1;
 
-
+	char aux[MAX];
 	close(pipe[1]);
 
 	char reader[MAX];
@@ -255,6 +255,7 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 		sprintf(messageQ.msg,sensores->id);
 	}
 	if(!strcmp(token,"ADD_ALERT")){
+		
 		token = strtok(NULL, "#");
 		strcpy(alerts->id,token);
 		token = strtok(NULL, "#");
@@ -264,7 +265,9 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 		token = strtok(NULL, "#");
 		alerts->max=atoi(token);
 
-		//Wtite log
+		sprintf (aux,"DISPATCHER: ADD ALERT %s (%s %d TO %d) SENT FOR PROCESSING ON WORKER %d",alerts->id,alerts->chave,alerts->min,alerts->max,id);
+		sprintf (aux,"WORKER %d: ADD ALERT %s (%s %d TO %d) PROCESSING COMPLETED",id,alerts->id,alerts->chave,alerts->min,alerts->max);
+		
 	}
 
 }
