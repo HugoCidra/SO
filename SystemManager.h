@@ -16,7 +16,7 @@ Hugo Batista Cidra Duarte - 2020219765
 #include <fcntl.h>
 #include <sys/wait.h>
 
-#define MAX 512
+#define MAX 1024
 
 typedef struct config{
 	int queue_size;
@@ -30,6 +30,7 @@ typedef struct sinc{
 	sem_t* log;
 	sem_t* alert_watcher_sem;
 	sem_t* shm_sem;
+	sem_t* mq_sem;
 	pthread_mutex_t queue_mutex;
 } sinc;
 
@@ -63,7 +64,8 @@ typedef struct sensor {
 } sensor;
 
 typedef struct messageQ {
-  char msg[MAX];
+	long type;
+	char msg[MAX];
 } messageQ;
 
 void writeLog(char * string);

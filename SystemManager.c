@@ -17,7 +17,8 @@ Hugo Batista Cidra Duarte - 2020219765
 #include <sys/wait.h>
 #include <errno.h>
 #include <sys/stat.h>
-#include <math.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
 #include "SystemManager.h"
 
 #define PIPE_NAME_C "CONSOLE_PIPE"
@@ -31,9 +32,11 @@ sensor* sensores;
 worker* workers;
 alert* alerts;
 queue* internalQueue;
+messageQ* mq;
 
 FILE *log_fp;
-int shmid_s, shmid_a, shmid_w, pids[3], max, sensor_fd, console_fd;
+int shmid_s, shmid_a, shmid_w, shmid_q, pids[3], max, sensor_fd, console_fd, msgID;
+key_t key;
 
 void erro(char* msg) {
     printf("Erro: %s\n", msg);
@@ -52,6 +55,8 @@ void erro(char* msg) {
 	sem_close(sincs->log);
 	sem_unlink("LOG");
 	sem_close(sincs->shm_sem);
+	sem_unlink("MQ");
+	sem_close(sincs->mq_sem);
 	sem_unlink("SHM");
 	pthread_mutex_destroy(&sincs->queue_mutex);
 
@@ -67,6 +72,8 @@ void erro(char* msg) {
 	shmctl(shmid_a, IPC_RMID, NULL);
 	shmdt(workers);
 	shmctl(shmid_w, IPC_RMID, NULL);
+	shmdt(mq);
+	shmctl(shmid_q, IPC_RMID, NULL);
 
 	//free resources
 	free(sincs);
@@ -75,6 +82,8 @@ void erro(char* msg) {
 	free(workers);
 	free(alerts);
 	free(internalQueue);
+	free(mq);
+    msgctl(msgID, IPC_RMID, NULL);
 
 	fclose(log_fp);
     exit(0);
@@ -181,6 +190,16 @@ void *ConsoleReader(){
 	}
 }
 
+void sendMsg(char* msg) {
+	sem_wait(sincs->mq_sem);
+
+	strcpy(mq->msg, msg);
+	msgsnd(msgID, mq, sizeof(mq), 0);
+	writeLog("Mensagem para user enviada.");
+
+	sem_post(sincs->mq_sem);
+}
+
 void *Dispatcher() {
     int aux;
 	while(1) {
@@ -197,7 +216,7 @@ void *Dispatcher() {
 							write(workers[j].pipe[1], internalQueue[i].command, strlen(internalQueue[i].command));
 							
 							char temp[512] = "";
-							sprintf(temp, "Task with priority level %d has been sent to worker %d", internalQueue[i].prio, workers[j].id);
+							sprintf(temp, "Task with priority level %d has been sent to worker %d\n", internalQueue[i].prio, workers[j].id);
 							writeLog(temp);
 							
 							strcpy(internalQueue[i].command, "");
@@ -244,7 +263,9 @@ void *AlertsWatcher(){
 				if((sensores[i].recentValue < alerts[j].min) || (sensores[i].recentValue > alerts[j].max)) {
 					writeLog("Valor lido por sensor fora dos limites de alerta.");
 
-					//mandar para a msg queue
+					char temp[MAX] = "";
+					sprintf(temp, "Valores anormais lidos em sensor com ID %s", sensores[i].id);
+					sendMsg(temp);
 					break;
 				}
 			}
@@ -287,7 +308,7 @@ void Worker(int* pipe,int id){
 		sprintf(temp, "Worker %d removeu aletra.", id);
 		writeLog(temp);
 
-		//mandar "OK" pela msg queue
+		sendMsg("OK\n");
     }
 
 	if(!strcmp(token, "LIST_ALERTS")) {
@@ -305,7 +326,7 @@ void Worker(int* pipe,int id){
 		char log[512] = "";
 		sprintf(log, "Worker %d enviou lista de alertas.", id);
 		writeLog(log);
-		//mandar para a msg queue
+		sendMsg(temp);
 	}
 	if(!strcmp(token, "STATS")){
 		char temp[1024] = "";
@@ -323,7 +344,7 @@ void Worker(int* pipe,int id){
 		sprintf(log, "Worker %d enviou estatisticas de sensores.", id);
 		writeLog(log);
 
-		//mandar para a msg queue
+		sendMsg(temp);
 	}
 
 	if(!strcmp(token, "RESET")) {
@@ -340,7 +361,7 @@ void Worker(int* pipe,int id){
 		sprintf(temp, "Worker %d limpou estatisticas de sensores.", id);
 		writeLog(temp);
 
-		//mandar para a msg queue
+		sendMsg("OK\n");
 	}
 
 	if(!strcmp(token, "SENSORS")) {
@@ -357,7 +378,7 @@ void Worker(int* pipe,int id){
 		sprintf(log, "Worker %d enviou lista de sensores.", id);
 		writeLog(log);
 
-		//mandar para a msg queue
+		sendMsg(temp);
 	}
 	if(!strcmp(token,"ADD_ALERT")){
 		int aux = 0, size = cfg->Max_Alerts, fill = 0;
@@ -366,7 +387,7 @@ void Worker(int* pipe,int id){
 			fill++;
 		}
 		if(fill == size) {
-			//mandar para a msg queue
+			sendMsg("Lista de alertas cheia.\n");
 			sem_post(sincs->shm_sem);
 			return;
 		}
@@ -379,7 +400,7 @@ void Worker(int* pipe,int id){
 			}
 		}
 		if(aux > 0) {
-			//mandar para a msg queue
+			sendMsg("Alerta ja existe na lista.\n");
 			sem_post(sincs->shm_sem);
 			return;
 		}
@@ -404,7 +425,7 @@ void Worker(int* pipe,int id){
 			}
 		}
 
-		//mandar para a msg queue
+		sendMsg("OK");
 		
 	}
 
@@ -459,6 +480,8 @@ void init() {
         alerts[i].id = malloc(sizeof(char*));
         alerts[i].chave = malloc(sizeof(char*));
     }
+
+	mq = malloc(sizeof(messageQ));
 }
 
 void sigint(int signum){
@@ -496,6 +519,8 @@ void sigint(int signum){
 	shmctl(shmid_a, IPC_RMID, NULL);
 	shmdt(workers);
 	shmctl(shmid_w, IPC_RMID, NULL);
+	shmdt(mq);
+	shmctl(shmid_q, IPC_RMID, NULL);
 
 	//free resources
 	free(sincs);
@@ -504,6 +529,8 @@ void sigint(int signum){
 	free(workers);
 	free(alerts);
 	free(internalQueue);
+	free(mq);
+    msgctl(msgID, IPC_RMID, NULL);
 
 	fclose(log_fp);
     exit(0);
@@ -517,9 +544,11 @@ int main(int argc, char* argv[]) {
     sem_unlink("LOG");
 	sem_unlink("ALERTS_W");
 	sem_unlink("SHM");
+	sem_unlink("MQ");
     sincs->log = sem_open("LOG", O_CREAT|O_EXCL, 0777, 1);
 	sincs->alert_watcher_sem = sem_open("ALERTS_W", O_CREAT|O_EXCL, 0777, 1);
 	sincs->shm_sem = sem_open("SHM", O_CREAT|O_EXCL, 0777, 1);
+	sincs->mq_sem = sem_open("MQ", O_CREAT|O_EXCL, 0777, 1);
 	sincs->queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 
     writeLog("Program Started");
@@ -533,16 +562,20 @@ int main(int argc, char* argv[]) {
 
 	//Create shared memory and map it
 	if((shmid_s = shmget(IPC_PRIVATE, sizeof(sensor)*cfg->Max_Sensors, IPC_CREAT|0777)) == -1)
-		erro("Erro a criar shared memmory.");
+		erro("Erro a criar shared memory.");
 	sensores = (sensor*)shmat(shmid_s, NULL, 0);
 
 	if((shmid_a = shmget(IPC_PRIVATE, sizeof(alert)*cfg->Max_Alerts, IPC_CREAT|0777)) == -1)
-		erro("Erro a criar shared memmory.");
+		erro("Erro a criar shared memory.");
 	alerts = (alert*)shmat(shmid_a, NULL, 0);
 
 	if((shmid_w = shmget(IPC_PRIVATE, sizeof(worker)*cfg->N_Workers, IPC_CREAT|0777)) == -1)
-		erro("Erro a criar shared memmory.");
+		erro("Erro a criar shared memory.");
 	workers = (worker*)shmat(shmid_w, NULL, 0);
+
+	if((shmid_q = shmget(IPC_PRIVATE, sizeof(messageQ), IPC_CREAT|0777)) == -1)
+		erro("Erro a criar shared memory");
+	mq = (messageQ*)shmat(shmid_q, NULL, 0);
 	
 	writeLog("Shared Memory created");
 
@@ -571,6 +604,11 @@ int main(int argc, char* argv[]) {
 	writeLog("ConsoleReader created");
 	pthread_join(thrds[2], NULL);
 	writeLog("Dispatcher created");
+
+	//Cria message queue
+	key = ftok("queue", 65);
+	msgID = msgget(key, 0666|IPC_CREAT);
+	mq->type = 1;
 
 	//Inicializar processor worker e Alters Watcher
 	if((pids[0] = fork()) == 0){

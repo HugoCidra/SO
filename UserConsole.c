@@ -9,11 +9,13 @@ Hugo Batista Cidra Duarte - 2020219765
 #include <string.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 
-#define BUFLEN 512
+#define BUFLEN 1024
 #define PIPE_NAME "CONSOLE_PIPE"
 
 typedef struct alert {
@@ -23,7 +25,13 @@ typedef struct alert {
     int max;
 } alert;
 
-int fd;
+typedef struct messageQ {
+    long type;
+    char message[BUFLEN];
+} messageQ;
+
+int fd, msgID;
+messageQ* mq;
 
 alert* init() {
     alert* a1 = malloc(sizeof(alert));
@@ -38,30 +46,40 @@ alert* init() {
 
 void erro(char *msg) {
     printf("Erro: %s\n", msg);
+    msgctl(msgID, IPC_RMID, NULL);
     close(fd);
     exit(0);
 }
 
 void sigint_handler(int signum) {
     close(fd);
+    msgctl(msgID, IPC_RMID, NULL);
     exit(0);
 }
 
 int main(int argc, char** argv) {
     char buf[BUFLEN];
     char* command = malloc(sizeof(char*)*2);
+    key_t key;
     if(argc != 2) erro("User <id da consola>");
 
     signal(SIGINT, sigint_handler);
 
     if((fd = open(PIPE_NAME, O_WRONLY)) < 0) erro("Cannot open pipe for writting: ");
     
+    key = ftok("queue", 65);
+    msgID = msgget(key, 0666|IPC_CREAT);
+    mq = malloc(sizeof(messageQ));
+
     while(1) {
         bzero((void *) buf, strlen(buf));
         int nread = read(0, buf, sizeof(buf));
         buf[nread] = '\0';
         buf[strcspn(buf, "\n")] = 0;
         char* token = strtok(buf, " ");
+
+        //message queue stuff
+        if(msgrcv(msgID, mq, sizeof(messageQ), 1, 0) > 0) printf("%s", mq->message);
 
         if(!strcmp(buf, "exit")) break;
         
