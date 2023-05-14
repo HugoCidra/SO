@@ -299,9 +299,30 @@ void init() {
     }
 }
 
+void sigint(int signum){
+    printf("\n");
+    writeLog("SIGNAL SIGINT RECEIVED");
+
+
+    signal(SIGINT, SIG_IGN);
+
+	pthread_exit();
+    
+    
+    //Waits for task manager, monitor and maintance manager to end
+    for(int i = 0; i < 3; i++){
+    	wait(NULL);
+    }
+    writeLog("SIMULATOR CLOSING");
+    clear();
+}
+
+
 int main(int argc, char* argv[]) {
     pthread_t *thrds;
 	log_fp = fopen("logs.txt", "a");
+
+	signal(SIGINT, sigint);
 
 	sems = (struct semaphores*) malloc(sizeof(struct semaphores));
     sem_unlink("LOG");
