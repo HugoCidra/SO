@@ -287,6 +287,10 @@ void Worker(int* pipe,int id){
             }
         }
 
+		char temp[512] = "";
+		sprintf(temp, "Worker %d removeu aletra.", id);
+		writeLog(temp);
+
 		//mandar "OK" pela msg queue
     }
 
@@ -306,6 +310,9 @@ void Worker(int* pipe,int id){
 			strcat(temp, "\n");
 		}
 
+		char temp[512] = "";
+		sprintf(temp, "Worker %d enviou lista de alertas.", id);
+		writeLog(temp);
 		//mandar para a msg queue
 	}
 	if(!strcmp(token, "STATS")){
@@ -328,6 +335,10 @@ void Worker(int* pipe,int id){
 			strcat(temp, "\n");
 		}
 
+		char temp[512] = "";
+		sprintf(temp, "Worker %d enviou estatisticas de sensores.", id);
+		writeLog(temp);
+
 		//mandar para a msg queue
 	}
 
@@ -341,6 +352,10 @@ void Worker(int* pipe,int id){
 			sensores[i].sum=0;
         }
 
+		char temp[512] = "";
+		sprintf(temp, "Worker %d limpou estatisticas de sensores.", id);
+		writeLog(temp);
+
 		//mandar para a msg queue
 	}
 
@@ -353,7 +368,11 @@ void Worker(int* pipe,int id){
 			strcat(temp, sensores[i].id);
 			strcat(temp, "\n");
 		}
-			
+		
+		char temp[512] = "";
+		sprintf(temp, "Worker %d enviou lista de sensores.", id);
+		writeLog(temp);
+
 		//mandar para a msg queue
 	}
 	if(!strcmp(token,"ADD_ALERT")){
@@ -393,16 +412,15 @@ void Worker(int* pipe,int id){
 				token = strtok(NULL, "#");
 				alerts[i].max=atoi(token);
 
+				char temp[512] = "";
+				sprintf(temp, "Worker %d adicionou alerta novo.", id);
+				writeLog(temp);
+
 				break;
 			}
 		}
 
 		//mandar para a msg queue
-
-		
-
-		//sprintf (aux,"DISPATCHER: ADD ALERT %s (%s %d TO %d) SENT FOR PROCESSING ON WORKER %d",alerts->id,alerts->chave,alerts->min,alerts->max,id);
-		//sprintf (aux,"WORKER %d: ADD ALERT %s (%s %d TO %d) PROCESSING COMPLETED",id,alerts->id,alerts->chave,alerts->min,alerts->max);
 		
 	}
 
@@ -420,7 +438,9 @@ void Worker(int* pipe,int id){
 				sensores[i].sum = sensores[i].sum + val;
 				sensores[i].avg = sensores[i].sum/sensores[i].count;
 
-				writeLog("Sensor updated.");
+				char temp[512] = "";
+				sprintf(temp, "Worker %d atualizou sensor %s.", id, sensores[i].id);
+				writeLog(temp);
 				break;
 			}
 		}
@@ -582,12 +602,17 @@ int main(int argc, char* argv[]) {
 			if ((pids[1+i] = fork()) == 0){
 				workers[i].id = i+1;
 				Worker(workers[i].pipe,i+1);
-				//write log
-			}else if(pids[1+i] == -1){
+
+				char temp[512] = "";
+				sprintf(temp, "Worker %d criado.", i+1);
+				writeLog(temp);
+			}
+			else if(pids[1+i] == -1){
 				printf("Error creating Worker process.\n");
 				exit(1);
 
-			}else{
+			}
+			else{
 				writeLog("Waiting for tasks to finish...");
 				wait(NULL);
 				writeLog("Programa a terminar.");
