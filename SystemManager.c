@@ -22,20 +22,60 @@ Hugo Batista Cidra Duarte - 2020219765
 #define PIPE_NAME_C "CONSOLE_PIPE"
 #define PIPE_NAME_S "SENSOR_PIPE"
 
-int max;
+
+pthread_t *thrds;
 sync *syncs;
-shared_mem *s_mem;
-config *cfg;
-sensor* sensores;
-worker* workers;
-alert* alerts;
-queue* internalQueue;
+config *cfg;//
+sensor* sensores;//
+worker* workers;//
+alert* alerts;//
+queue* internalQueue;//
 
 FILE *log_fp;
-int shmid,pids[3];
+int shmid_s, shmid_a, shmid_w, pids[3], max, sensor_fd, console_fd;
 
 void erro(char* msg) {
     printf("Erro: %s\n", msg);
+	writeLog("Programa a terminar.");
+
+	//close names pipes fd and wait workers
+	close(sensor_fd);
+	unlink(PIPE_NAME_S);
+	close(console_fd);
+	unlink(PIPE_NAME_C);
+	wait(NULL);
+	
+	//unlink sems and destroy mutexes
+	sem_close(syncs->alert_watcher_sem);
+	sem_unlink("ALERTS_W");
+	sem_close(syncs->log);
+	sem_unlink("LOG");
+	sem_close(syncs->shm_sem);
+	sem_unlink("SHM");
+	pthread_mutex_destroy(syncs->queue_mutex);
+
+	//exit threads
+	for(int i = 0; i < sizeof(thrds)/sizeof(thrds[0]); ++i) {
+		pthread_cancel(thrds[i]);
+	}
+
+	//detatch shm
+	shmdt(sensores);
+	shmctl(shmid_s, IPC_RMID, NULL);
+	shmdt(alerts);
+	shmctl(shmid_a, IPC_RMID, NULL);
+	shmdt(workers);
+	shmctl(shmid_w, IPC_RMID, NULL);
+
+	//free resources
+	free(syncs);
+	free(cfg);
+	free(sensores);
+	free(workers);
+	free(alerts);
+	free(internalQueue);
+
+	close(log_fp);
     exit(0);
 }
 
@@ -106,40 +146,40 @@ void adicionaQueue(char* string, int prio) {
         }
     }
 
+	writeLog("Task adicionada a queue.");
+
     pthread_mutex_unlock(syncs->queue_mutex);
 }
 
 void *SensorReader(){
-	int fd;
 	sensores = initS();
 	char info[512] = "";
-	if((fd = open(PIPE_NAME_S, O_RDONLY)) < 0) erro("Cannot open pipe for reading (Sensor): ");
+	if((sensor_fd = open(PIPE_NAME_S, O_RDONLY)) < 0) erro("Cannot open pipe for reading (Sensor): ");
 
 	
 	while(1) {
 		bzero((void*) info, strlen(info));
-		int nread = read(fd, info, sizeof(info));
+		int nread = read(sensor_fd, info, sizeof(info));
 		info[nread] = '\0';
 		info[strcspn(info, "\n")] = 0;
 
 		adicionaQueue(info, 2);
 	}
 
-	close(fd);
+	close(sensor_fd);
 	free(sensores);
 }
 
 void *ConsoleReader(){
-	int fd;
 	char* id = malloc(sizeof(char*));
 	
 	while(1) {
-		close(fd);
-		if((fd = open(PIPE_NAME_C, O_RDONLY)) < 0) erro("Cannot open pipe for reading (Console): ");
+		close(console_fd);
+		if((console_fd = open(PIPE_NAME_C, O_RDONLY)) < 0) erro("Cannot open pipe for reading (Console): ");
 
 		char command[512] = "";
 		bzero((void *) command, strlen(command));
-		int nread = read(fd, command, sizeof(command));
+		int nread = read(console_fd, command, sizeof(command));
 		command[nread] = '\0';
 		command[strcspn(command, "\n")] = 0;
 
@@ -159,11 +199,17 @@ void *Dispatcher() {
                 for(int j = 0; j < cfg->N_Workers; j++) {
 
                     if(!workers[j].active) {
+						close(workers[j].pipe[0]);
                         write(workers[j].pipe[1], internalQueue[i].command, strlen(internalQueue[i].command));
-
-                        strcpy(internalQueue[i].command, "");
+						
+						char temp[512] = "";
+						sprintf(temp, "Task with priority level %d has been sent to worker %d", internalQueue[i].prio, workers[j].id);
+						writeLog(temp);
+                        
+						strcpy(internalQueue[i].command, "");
                         internalQueue[i].prio = 3;
 
+						
                     }
                 }
             }
@@ -171,8 +217,13 @@ void *Dispatcher() {
             else if(internalQueue[i].prio == 2) {
                 for(int j = 0; j < cfg->N_Workers; j++) {
                     if (!workers[j].active){
+						close(workers[j].pipe[0]);
 						write(workers[j].pipe[1], internalQueue[i].command, strlen(internalQueue[i].command));
                         
+						char temp[512] = "";
+						sprintf(temp, "Task with priority level %d has been sent to worker %d", internalQueue[i].prio, workers[j].id);
+						writeLog(temp);
+
                         strcpy(internalQueue[i].command, "");
                         internalQueue[i].prio = 3;
 
@@ -183,93 +234,198 @@ void *Dispatcher() {
 			pthread_mutex_unlock(syncs->queue_mutex);
         }
     }
-
-    //Meter writeLog()
 }
 
 void *AlertsWatcher(){
-	printf("Alerts Watcher criado!!!\n");
-	int aux;
-	if((aux = sizeof(alerts)/sizeof(alerts[0])) > 0) {
-        for(int i = 0; i < aux; i++){
-			if (sensores[0].recentValue<alerts[i].min){
-				strcpy(messageQ.msg, "valor do sensor inferior ao do alerta");
+	writeLog("Alerts Watcher iniciado.");
+	while(1) {
+		sem_wait(syncs->shm_sem);
+
+		for(int i = 0; i < sizeof(sensores)/sizeof(sensores[0]); ++i) {
+			if(!strcmp(sensores[i].id, "")) continue;
+
+			for(int j = 0; j < sizeof(alerts)/sizeof(alerts[0]); ++j) {
+				if((sensores[i].recentValue < alerts[j].min) || (sensores[i].recentValue > alerts[j].max)) {
+					//mandar para a msg queue
+					break;
+				}
 			}
-			if (sensores[0].recentValue>alerts[i].max){
-				strcpy(messageQ.msg, "valor do sensor superior ao do alerta");
-			}
+			
 		}
-	
+
+		sem_post(syncs->shm_sem);
 	}
+	
 }
-void Worker(int* pipe,int id){ //SINCRONIZAÇAO
-	workers->active = 1;
 
-
+void Worker(int* pipe,int id){
 	close(pipe[1]);
 
 	char reader[MAX];
 	read(pipe[0],reader,MAX);
 	char* token = strtok(reader, "#");
+
+	sem_wait(syncs->shm_sem);
+	workers[id].active = 1;
+	sem_post(syncs->shm_sem);
+
+	sem_wait(syncs->shm_sem);
+
 	if(!strcmp(token, "REMOVE_ALERT")) {
 		
 		token = strtok(NULL, "#");
 
 		//Procurar e depois "eliminar"
-        for (int i = 0; i < sizeof(alert); i++){
-            if (alerts[i]->id==token){
-                strcpp(alerts->id, "");
-				strcpp(alerts->chave, "");
-                alerts->min= 0;
-                alerts->max= 0;
+        for (int i = 0; i < sizeof(alerts)/sizeof(alerts[0]); i++){
+            if(!strcmp(alerts[i].id,token)) {
+                strcpy(alerts[i].id, "");
+				strcpy(alerts[i].chave, "");
+                alerts[i].min = 0;
+                alerts[i].max = 0;
             }
         }
 
+		//mandar "OK" pela msg queue
     }
 
 	if(!strcmp(token, "LIST_ALERTS")) {
-		printf("ID	Key	MIN	MAX");
-		printf("%s	%s	%d	%d",alerts->id, alerts->chave, alerts->min, alerts->max);
+		char temp[1024] = "";
+		strcat(temp, "ID	KEY		MIN		MAX\n");
+		for(int i = 0; i < sizeof(alerts)/sizeof(alerts[0]); ++i) {
+			if(!strcmp(alerts[i].id, "")) continue; 
+			
+			strcat(temp, alerts[i].id);
+			strcat(temp, " ");
+			strcat(temp, alerts[i].chave);
+			strcat(temp, " ");
+			strcat(temp, itoa(alerts[i].min));
+			strcat(temp, " ");
+			strcat(temp, itoa(alerts[i].max));
+			strcat(temp, "\n");
+		}
+
+		//mandar para a msg queue
 	}
 	if(!strcmp(token, "STATS")){
-		sprintf(messageQ.msg,"%s %d %d %d %d %d", sensores->chave, sensores->recentValue,sensores->min,sensores->max,sensores->avg,sensores->count);
+		char temp[1024] = "";
+		strcat(temp, "Key	Last	Min		Max		Avg		Count\n");
+		for(int i = 0; i < sizeof(sensores)/sizeof(sensores[0]); i++) {
+			if(!strcmp(sensores[i].id, "")) continue;
+
+			strcat(temp, sensores[i].chave);
+			strcat(temp, " ");
+			strcat(temp, itoa(sensores[i].recentValue));
+			strcat(temp, " ");
+			strcat(temp, itoa(sensores[i].min));
+			strcat(temp, " ");
+			strcat(temp, itoa(sensores[i].max));
+			strcat(temp, " ");
+			strcat(temp, itoa(sensores[i].avg));
+			strcat(temp, " ");
+			strcat(temp, itoa(sensores[i].count));
+			strcat(temp, "\n");
+		}
+
+		//mandar para a msg queue
 	}
 
 	if(!strcmp(token, "RESET")) {
-        for (int i = 0; i < sizeof(alert); i++){
-            sensores->min=0;
-            sensores->max=0;
-			sensores->avg=0;
-			sensores->recentValue=0;
-			sensores->count=0;
-			sensores->sum=0;
+        for (int i = 0; i < sizeof(sensores)/sizeof(sensores[0]); i++){
+            sensores[i].min=0;
+            sensores[i].max=0;
+			sensores[i].avg=0;
+			sensores[i].recentValue=0;
+			sensores[i].count=0;
+			sensores[i].sum=0;
         }
+
+		//mandar para a msg queue
 	}
 
 	if(!strcmp(token, "SENSORS")) {
-		printf("ID\n");
-		for (int i = 0; i < sizeof(alert); i++){
-			printf("%d\n",sensores->id);	
+		char temp[1024] = "";
+		strcat(temp, "ID\n");
+		for (int i = 0; i < sizeof(sensores)/sizeof(sensores[0]); i++){
+			if(!strcmp(sensores[i].id, "")) continue;
+			
+			strcat(temp, sensores[i].id);
+			strcat(temp, "\n");
 		}
 			
-		sprintf(messageQ.msg,sensores->id);
+		//mandar para a msg queue
 	}
 	if(!strcmp(token,"ADD_ALERT")){
+		int aux = 0, size = sizeof(alerts)/(sizeof(alerts[0])), fill = 0;
 		
-		token = strtok(NULL, "#");
-		strcpy(alerts->id,token);
-		token = strtok(NULL, "#");
-		strcpy(alerts->chave,token);
-		token = strtok(NULL, "#");
-		alerts->min=atoi(token);
-		token = strtok(NULL, "#");
-		alerts->max=atoi(token);
+		for(int i = 0; i < size; ++i) {
+			fill++;
+		}
+		if(fill == size) {
+			//mandar para a msg queue
+			sem_post(syncs->shm_sem);
+			return;
+		}
+		
+		for(int i = 0; i < size; ++i) {
+			
+			if(!strcmp(alerts[i].id, token)) {
+				aux++;
+				break;
+			}
+		}
+		if(aux > 0) {
+			//mandar para a msg queue
+			sem_post(syncs->shm_sem);
+			return;
+		}
 
-		sprintf (aux,"DISPATCHER: ADD ALERT %s (%s %d TO %d) SENT FOR PROCESSING ON WORKER %d",alerts->id,alerts->chave,alerts->min,alerts->max,id);
-		sprintf (aux,"WORKER %d: ADD ALERT %s (%s %d TO %d) PROCESSING COMPLETED",id,alerts->id,alerts->chave,alerts->min,alerts->max);
+		for(int i = 0; i < size; ++i) {
+			
+			if(!strcmp(alerts[i].id, "")) {
+				token = strtok(NULL, "#");
+				strcpy(alerts[i].id, token);
+				token = strtok(NULL, "#");
+				strcpy(alerts[i].chave,token);
+				token = strtok(NULL, "#");
+				alerts[i].min=atoi(token);
+				token = strtok(NULL, "#");
+				alerts[i].max=atoi(token);
+
+				break;
+			}
+		}
+
+		//mandar para a msg queue
+
+		
+
+		//sprintf (aux,"DISPATCHER: ADD ALERT %s (%s %d TO %d) SENT FOR PROCESSING ON WORKER %d",alerts->id,alerts->chave,alerts->min,alerts->max,id);
+		//sprintf (aux,"WORKER %d: ADD ALERT %s (%s %d TO %d) PROCESSING COMPLETED",id,alerts->id,alerts->chave,alerts->min,alerts->max);
 		
 	}
 
+	for(int i = 0; i < sizeof(sensores)/sizeof(sensores[0]); ++i) {
+		if(!strcmp(token, sensores[i].id)) {
+			token = strtok(NULL, "#");
+			if(!strcmp(token, sensores[i].chave)) {
+				token = strtok(NULL, "#");
+				int val = atoi(token);
+				
+				sensores[i].recentValue = val;
+				if(val < sensores[i].min) sensores[i].min = val;
+				if(val > sensores[i].max) sensores[i].max = val;
+				sensores[i].count++;
+				sensores[i].sum = sensores[i].sum + val;
+				sensores[i].avg = sensores[i].sum/sensores[i].count;
+
+				writeLog("Sensor updated.");
+				break;
+			}
+		}
+	}
+
+	workers[id].active = 0;
+	sem_post(syncs->shm_sem);
 }
 
 void init() {
@@ -300,53 +456,91 @@ void init() {
 }
 
 void sigint(int signum){
-    printf("\n");
-    writeLog("SIGNAL SIGINT RECEIVED");
-
+	printf("\n");
+	writeLog("Signal SIGINT recebido.");
+	writeLog("Programa a terminar.");
 
     signal(SIGINT, SIG_IGN);
 
-	pthread_exit();
-    
-    
-    //Waits for task manager, monitor and maintance manager to end
-    for(int i = 0; i < 3; i++){
-    	wait(NULL);
-    }
-    writeLog("SIMULATOR CLOSING");
-    clear();
+	//close names pipes fd and wait workers
+	close(sensor_fd);
+	unlink(PIPE_NAME_S);
+	close(console_fd);
+	unlink(PIPE_NAME_C);
+	wait(NULL);
+	
+	//unlink sems and destroy mutexes
+	sem_close(syncs->alert_watcher_sem);
+	sem_unlink("ALERTS_W");
+	sem_close(syncs->log);
+	sem_unlink("LOG");
+	sem_close(syncs->shm_sem);
+	sem_unlink("SHM");
+	pthread_mutex_destroy(syncs->queue_mutex);
+
+	//exit threads
+	for(int i = 0; i < sizeof(thrds)/sizeof(thrds[0]); ++i) {
+		pthread_cancel(thrds[i]);
+	}
+
+	//detatch shm
+	shmdt(sensores);
+	shmctl(shmid_s, IPC_RMID, NULL);
+	shmdt(alerts);
+	shmctl(shmid_a, IPC_RMID, NULL);
+	shmdt(workers);
+	shmctl(shmid_w, IPC_RMID, NULL);
+
+	//free resources
+	free(syncs);
+	free(cfg);
+	free(sensores);
+	free(workers);
+	free(alerts);
+	free(internalQueue);
+
+	close(log_fp);
+    exit(0);
 }
 
 
 int main(int argc, char* argv[]) {
-    pthread_t *thrds;
 	log_fp = fopen("logs.txt", "a");
 
-	sems = (struct semaphores*) malloc(sizeof(struct semaphores));
+	syncs = (sync*) malloc(sizeof(sync));
     sem_unlink("LOG");
 	sem_unlink("ALERTS_W");
+	sem_unlink("SHM");
     syncs->log = sem_open("LOG", O_CREAT|O_EXCL, 0777, 1);
 	syncs->alert_watcher_sem = sem_open("ALERTS_W", O_CREAT|O_EXCL, 0777, 1);
+	syncs->shm_sem = sem_open("SHM", O_CREAT|O_EXCL, 0777, 1);
 	syncs->queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 
     writeLog("Program Started");
 
-	//Create shared memory
-	shmid = shmget(IPC_PRIVATE, sizeof(struct shared_mem), IPC_CREAT|0700);
-    //if (shmid < 1) exit(1);
-    s_mem = (struct shared_mem*) shmat(shmid, NULL, 0);
-	//if (s_mem < (struct shared_mem *) 1) exit(1);
+	//Read the configuration file
+    char *file_name = argv[1];
+	cfg = readConfig(file_name);
+
+	//Iniclializar arrays
+    init();
+
+	//Create shared memory and map it
+	if((shmid_s = shmget(IPC_PRIVATE, sizeof(sensor)*cfg->Max_Sensors, IPC_CREAT|0777)) == -1)
+		erro("Erro a criar shared memmory.");
+	sensores = (sensor*)shmat(shmid_s, NULL, 0);
+
+	if((shmid_a = shmget(IPC_PRIVATE, sizeof(alert)*cfg->Max_Alerts, IPC_CREAT|0777)) == -1)
+		erro("Erro a criar shared memmory.");
+	alerts = (alert*)shmat(shmid_a, NULL, 0);
+
+	if((shmid_w = shmget(IPC_PRIVATE, sizeof(worker)*cfg->N_Workers, IPC_CREAT|0777)) == -1)
+		erro("Erro a criar shared memmory.");
+	workers = (worker*)shmat(shmid_w, NULL, 0);
 	
 	writeLog("Shared Memory created");
 
-
-	//Read the configuration file
-    char *file_name = argv[1];
-
-	cfg = readConfig(file_name);
-    init();
-
-	//Create and open named pipe if it does not exist already
+	//Create and open named pipes if they don't yet exist
 	if(access(PIPE_NAME_C, F_OK) == -1) {
 		if(mkfifo(PIPE_NAME_C, 0666) == -1) erro("Erro a criar CONSOLE_PIPE: ");
 	}
@@ -364,7 +558,7 @@ int main(int argc, char* argv[]) {
 		printf("Error creating thread scheduler.");
 	}
 	
-
+	//Joins
 	pthread_join(thrds[0], NULL);
 	writeLog("SensorReader created");
 	pthread_join(thrds[1], NULL);
@@ -372,9 +566,7 @@ int main(int argc, char* argv[]) {
 	pthread_join(thrds[2], NULL);
 	writeLog("Dispatcher created");
 
-	
-	
-
+	//Inicializar processor worker e Alters Watcher
 	if((pids[0] = fork()) == 0){
 		
         AlertsWatcher();
@@ -394,12 +586,11 @@ int main(int argc, char* argv[]) {
 				exit(1);
 
 			}else{
-				writeLog("HOME_IOT SIMULATOR WAITING FOR LAST TASKS TO FINISH");
+				writeLog("Waiting for tasks to finish...");
 				wait(NULL);
-				writeLog("HOME_IOT SIMULATOR CLOSING");
+				writeLog("Programa a terminar.");
 				sem_unlink("LOG");
 				fclose(log_fp);
-				
 			}
 		}
 	}

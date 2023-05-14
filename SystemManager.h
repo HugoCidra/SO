@@ -27,8 +27,9 @@ typedef struct config{
 } config;
 
 typedef struct sync{
-	sem_t *log;
-	sem_t *alert_watcher_sem;
+	sem_t* log;
+	sem_t* alert_watcher_sem;
+	sem_t* shm_sem;
 	pthread_mutex_t* queue_mutex;
 } sync;
 
@@ -61,11 +62,6 @@ typedef struct sensor {
 	long int sum;
 } sensor;
 
-typedef struct shared_mem{
-	sensor* sens;
-	alert* alertado;
-} shared_mem;
-
-struct messageQ{
+typedef struct messageQ {
   char msg[MAX];
-}messageQ;
+} messageQ;

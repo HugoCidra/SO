@@ -10,6 +10,7 @@ Hugo Batista Cidra Duarte - 2020219765
 #include <time.h>
 #include <fcntl.h>
 #include <ctype.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -23,6 +24,9 @@ typedef struct sensor {
     int min;
     int max;
 } sensor;
+
+int fd;
+unsigned long int sent = 0;
 
 sensor* init() {
     sensor* s1 = malloc(sizeof(sensor*));
@@ -41,13 +45,24 @@ void erro(char *msg) {
     exit(-1);
 }
 
+void sigtstp_handler(int signum) {
+    printf("Total de mensagens enviadas para o System Manager: %d\n", sent);
+}
+
+void sigint_handler(int signum) {
+    close(fd);
+    exit(0);
+}
+
 int main(int argc, char** argv) {
     sensor* s1 = init();
-    int fd;
     srand(time(NULL));
     char* info = malloc(sizeof(char*)*4*2+2+5);
 
     if(argc != 6) erro("Sensor <id do sensor> <intervalo de envios em s> <chave> <min val> <max val>");
+
+    signal(SIGINT, sigint_handler);
+    signal(SIGTSTP, sigtstp_handler);
 
     if(strlen(argv[1]) < 3 || strlen(argv[1]) > 32) erro("Tamanho do <ID> incorreto.");
     strcpy(s1->id, argv[1]);
@@ -90,7 +105,7 @@ int main(int argc, char** argv) {
         write(fd, info, strlen(info));
         printf("%s\n", info);
 
-        //free(info);
+        sent++;
         free(temp);
 
         sleep(s1->intervalo);

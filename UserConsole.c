@@ -8,6 +8,7 @@ Hugo Batista Cidra Duarte - 2020219765
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -22,6 +23,8 @@ typedef struct alert {
     int max;
 } alert;
 
+int fd;
+
 alert* init() {
     alert* a1 = malloc(sizeof(alert));
 
@@ -35,14 +38,21 @@ alert* init() {
 
 void erro(char *msg) {
     printf("Erro: %s\n", msg);
-    exit(-1);
+    close(fd);
+    exit(0);
+}
+
+void sigint_handler(int signum) {
+    close(fd);
+    exit(0);
 }
 
 int main(int argc, char** argv) {
     char buf[BUFLEN];
-    int fd;
     char* command = malloc(sizeof(char*)*2);
     if(argc != 2) erro("User <id da consola>");
+
+    signal(SIGINT, sigint_handler);
 
     if((fd = open(PIPE_NAME, O_WRONLY)) < 0) erro("Cannot open pipe for writting: ");
     
