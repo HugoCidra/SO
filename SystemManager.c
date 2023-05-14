@@ -246,6 +246,8 @@ void *AlertsWatcher(){
 
 			for(int j = 0; j < sizeof(alerts)/sizeof(alerts[0]); ++j) {
 				if((sensores[i].recentValue < alerts[j].min) || (sensores[i].recentValue > alerts[j].max)) {
+					writeLog("Valor lido por sensor fora dos limites de alerta.");
+
 					//mandar para a msg queue
 					break;
 				}
