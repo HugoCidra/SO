@@ -26,12 +26,12 @@ typedef struct config{
 	int Max_Alerts;
 } config;
 
-typedef struct sync{
+typedef struct sinc{
 	sem_t* log;
 	sem_t* alert_watcher_sem;
 	sem_t* shm_sem;
-	pthread_mutex_t* queue_mutex;
-} sync;
+	pthread_mutex_t queue_mutex;
+} sinc;
 
 typedef struct queue{
 	char command[MAX];	//vou mudar
@@ -65,3 +65,5 @@ typedef struct sensor {
 typedef struct messageQ {
   char msg[MAX];
 } messageQ;
+
+void writeLog(char * string);

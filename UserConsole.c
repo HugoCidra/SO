@@ -62,7 +62,6 @@ int main(int argc, char** argv) {
         buf[nread] = '\0';
         buf[strcspn(buf, "\n")] = 0;
         char* token = strtok(buf, " ");
-        char alertID[BUFLEN] = "";
 
         if(!strcmp(buf, "exit")) break;
         
@@ -100,7 +99,7 @@ int main(int argc, char** argv) {
             
             //Programa envia info do alerta para o sys manager pelo named pipe (CONSOLE_PIPE)
 
-            int count = 0, min = 0, max = 0;
+            int count = 0, min = 0;
             strcpy(command, token);
             
             while(token != NULL) {
