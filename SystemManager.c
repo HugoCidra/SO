@@ -188,11 +188,20 @@ void *Dispatcher() {
 }
 
 void *AlertsWatcher(){
-	//messageQ msg;
-
 	printf("Alerts Watcher criado!!!\n");
+	int aux;
+	if((aux = sizeof(alerts)/sizeof(alerts[0])) > 0) {
+        for(int i = 0; i < aux; i++){
+			if (sensores[0].recentValue<alerts[i].min){
+				strcpy(messageQ.msg, "valor do sensor inferior ao do alerta");
+			}
+			if (sensores[0].recentValue>alerts[i].max){
+				strcpy(messageQ.msg, "valor do sensor superior ao do alerta");
+			}
+		}
+	
+	}
 }
-
 void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 	workers->active = 1;
 
@@ -207,10 +216,16 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 		token = strtok(NULL, "#");
 
 		//Procurar e depois "eliminar"
-		strcpy(alerts->id, "");
-		alerts->min= 0;
-		alerts->max= 0;
-	}
+        for (int i = 0; i < sizeof(alert); i++){
+            if (alerts[i]->id==token){
+                strcpp(alerts->id, "");
+				strcpp(alerts->chave, "");
+                alerts->min= 0;
+                alerts->max= 0;
+            }
+        }
+
+    }
 
 	if(!strcmp(token, "LIST_ALERTS")) {
 		printf("ID	Key	MIN	MAX");
@@ -221,8 +236,14 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 	}
 
 	if(!strcmp(token, "RESET")) {
-		alerts->min=0;
-		alerts->max=0;
+        for (int i = 0; i < sizeof(alert); i++){
+            sensores->min=0;
+            sensores->max=0;
+			sensores->avg=0;
+			sensores->recentValue=0;
+			sensores->count=0;
+			sensores->sum=0;
+        }
 	}
 
 	if(!strcmp(token, "SENSORS")) {
