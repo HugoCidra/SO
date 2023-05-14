@@ -67,6 +67,5 @@ typedef struct shared_mem{
 } shared_mem;
 
 struct messageQ{
-  long mtype;
   char msg[MAX];
 }messageQ;

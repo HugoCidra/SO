@@ -188,13 +188,23 @@ void *Dispatcher() {
 }
 
 void *AlertsWatcher(){
-	//messageQ msg;
-
 	printf("Alerts Watcher criado!!!\n");
+	int aux;
+	if((aux = sizeof(alerts)/sizeof(alerts[0])) > 0) {
+        for(int i = 0; i < aux; i++){
+			if (sensores[0].recentValue<alerts[i].min){
+				strcpy(messageQ.msg, "valor do sensor inferior ao do alerta");
+			}
+			if (sensores[0].recentValue>alerts[i].max){
+				strcpy(messageQ.msg, "valor do sensor superior ao do alerta");
+			}
+		}
+	
+	}
 }
-
 void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 	workers->active = 1;
+
 
 	close(pipe[1]);
 
@@ -206,10 +216,16 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 		token = strtok(NULL, "#");
 
 		//Procurar e depois "eliminar"
-		strcpy(alerts->id, "");
-		alerts->min= 0;
-		alerts->max= 0;
-	}
+        for (int i = 0; i < sizeof(alert); i++){
+            if (alerts[i]->id==token){
+                strcpp(alerts->id, "");
+				strcpp(alerts->chave, "");
+                alerts->min= 0;
+                alerts->max= 0;
+            }
+        }
+
+    }
 
 	if(!strcmp(token, "LIST_ALERTS")) {
 		printf("ID	Key	MIN	MAX");
@@ -220,8 +236,14 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 	}
 
 	if(!strcmp(token, "RESET")) {
-		alerts->min=0;
-		alerts->max=0;
+        for (int i = 0; i < sizeof(alert); i++){
+            sensores->min=0;
+            sensores->max=0;
+			sensores->avg=0;
+			sensores->recentValue=0;
+			sensores->count=0;
+			sensores->sum=0;
+        }
 	}
 
 	if(!strcmp(token, "SENSORS")) {
@@ -233,6 +255,7 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 		sprintf(messageQ.msg,sensores->id);
 	}
 	if(!strcmp(token,"ADD_ALERT")){
+		
 		token = strtok(NULL, "#");
 		strcpy(alerts->id,token);
 		token = strtok(NULL, "#");
@@ -242,7 +265,9 @@ void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 		token = strtok(NULL, "#");
 		alerts->max=atoi(token);
 
-		//Wtite log
+		sprintf (aux,"DISPATCHER: ADD ALERT %s (%s %d TO %d) SENT FOR PROCESSING ON WORKER %d",alerts->id,alerts->chave,alerts->min,alerts->max,id);
+		sprintf (aux,"WORKER %d: ADD ALERT %s (%s %d TO %d) PROCESSING COMPLETED",id,alerts->id,alerts->chave,alerts->min,alerts->max);
+		
 	}
 
 }
@@ -274,12 +299,30 @@ void init() {
     }
 }
 
+void sigint(int signum){
+    printf("\n");
+    writeLog("SIGNAL SIGINT RECEIVED");
+
+
+    signal(SIGINT, SIG_IGN);
+
+	pthread_exit();
+    
+    
+    //Waits for task manager, monitor and maintance manager to end
+    for(int i = 0; i < 3; i++){
+    	wait(NULL);
+    }
+    writeLog("SIMULATOR CLOSING");
+    clear();
+}
+
+
 int main(int argc, char* argv[]) {
     pthread_t *thrds;
 	log_fp = fopen("logs.txt", "a");
 
-	//Inicializacao de semaforos
-	syncs = (sync*) malloc(sizeof(sync));
+	sems = (struct semaphores*) malloc(sizeof(struct semaphores));
     sem_unlink("LOG");
 	sem_unlink("ALERTS_W");
     syncs->log = sem_open("LOG", O_CREAT|O_EXCL, 0777, 1);
