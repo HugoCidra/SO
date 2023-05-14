@@ -23,7 +23,7 @@ Hugo Batista Cidra Duarte - 2020219765
 #define PIPE_NAME_S "SENSOR_PIPE"
 
 int max;
-semaphores *sems;
+sync *syncs;
 shared_mem *s_mem;
 config *cfg;
 sensor* sensores;
@@ -88,16 +88,16 @@ void writeLog(char * string){
 	
     sprintf(buffer,"%.2d:%.2d:%.2d %s\n",timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec,string);
 	
-	sem_wait(sems->log);
+	sem_wait(syncs->log);
     write(1, buffer, strlen(buffer));
     fprintf(log_fp,"%s",buffer);
     fflush(log_fp);
     fflush(stdout);
-	sem_post(sems->log);
+	sem_post(syncs->log);
 }
 
 void adicionaQueue(char* string, int prio) {
-    //sem_wait()//
+    pthread_mutex_lock(syncs->queue_mutex);
 
     for(int i = 0; i < sizeof(internalQueue)/siezof(internalQueue[0]); i++) {
         if(internalQueue[i].prio == 3) {
@@ -106,7 +106,7 @@ void adicionaQueue(char* string, int prio) {
         }
     }
 
-    //sem_post()//
+    pthread_mutex_unlock(syncs->queue_mutex);
 }
 
 void *SensorReader(){
@@ -149,20 +149,21 @@ void *ConsoleReader(){
 
 void *Dispatcher() {
     int aux;
+	
     if((aux = sizeof(internalQueue)/sizeof(internalQueue[0])) > 0) {
+		
         for(int i = 0; i < aux; i++) {
+			pthread_mutex_lock(syncs->queue_mutex);
+
             if(internalQueue[i].prio == 1) {
                 for(int j = 0; j < cfg->N_Workers; j++) {
 
                     if(!workers[j].active) {
                         write(workers[j].pipe[1], internalQueue[i].command, strlen(internalQueue[i].command));
 
-                        //Mutext lock//
-
                         strcpy(internalQueue[i].command, "");
                         internalQueue[i].prio = 3;
 
-                        //Mutex unlock//
                     }
                 }
             }
@@ -172,15 +173,14 @@ void *Dispatcher() {
                     if (!workers[j].active){
 						write(workers[j].pipe[1], internalQueue[i].command, strlen(internalQueue[i].command));
                         
-                        //Mutext lock//
-
                         strcpy(internalQueue[i].command, "");
                         internalQueue[i].prio = 3;
 
-                        //Mutex unlock//
 					}
                 }
             }
+
+			pthread_mutex_unlock(syncs->queue_mutex);
         }
     }
 
@@ -195,7 +195,6 @@ void *AlertsWatcher(){
 
 void Worker(int* pipe,int id){ //SINCRONIZAÇAO
 	workers->active = 1;
-
 
 	close(pipe[1]);
 
@@ -279,9 +278,13 @@ int main(int argc, char* argv[]) {
     pthread_t *thrds;
 	log_fp = fopen("logs.txt", "a");
 
-	sems = (struct semaphores*) malloc(sizeof(struct semaphores));
+	//Inicializacao de semaforos
+	syncs = (sync*) malloc(sizeof(sync));
     sem_unlink("LOG");
-    sems->log = sem_open("LOG", O_CREAT|O_EXCL, 0700, 1);
+	sem_unlink("ALERTS_W");
+    syncs->log = sem_open("LOG", O_CREAT|O_EXCL, 0777, 1);
+	syncs->alert_watcher_sem = sem_open("ALERTS_W", O_CREAT|O_EXCL, 0777, 1);
+	syncs->queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 
     writeLog("Program Started");
 

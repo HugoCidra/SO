@@ -26,10 +26,11 @@ typedef struct config{
 	int Max_Alerts;
 } config;
 
-typedef struct semaphores{
+typedef struct sync{
 	sem_t *log;
 	sem_t *alert_watcher_sem;
-} semaphores;
+	pthread_mutex_t* queue_mutex;
+} sync;
 
 typedef struct queue{
 	char command[MAX];	//vou mudar
