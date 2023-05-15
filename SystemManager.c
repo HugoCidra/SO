@@ -25,7 +25,7 @@ Hugo Batista Cidra Duarte - 2020219765
 #define PIPE_NAME_S "SENSOR_PIPE"
 
 
-pthread_t *thrds;
+pthread_t *thrds[3];
 sinc *sincs;
 config *cfg;
 sensor* sensores;
@@ -549,7 +549,7 @@ int main(int argc, char* argv[]) {
 	sincs->alert_watcher_sem = sem_open("ALERTS_W", O_CREAT|O_EXCL, 0777, 1);
 	sincs->shm_sem = sem_open("SHM", O_CREAT|O_EXCL, 0777, 1);
 	sincs->mq_sem = sem_open("MQ", O_CREAT|O_EXCL, 0777, 1);
-	sincs->queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+	sincs->queue_mutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
 
     writeLog("Program Started");
 
